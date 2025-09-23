@@ -19,13 +19,14 @@ pub struct UniversalCommitter {
     block_store: BlockStore,
     committers: Vec<BaseCommitter>,
     metrics: Arc<Metrics>,
+    wave_length: u64,
 }
 
 impl UniversalCommitter {
     /// Try to commit part of the dag. This function is idempotent and returns a list of
     /// ordered decided leaders.
     #[tracing::instrument(skip_all, fields(last_decided = %last_decided))]
-    pub fn try_commit(&self, last_decided: BlockReference) -> Vec<LeaderStatus> {
+    pub fn try_commit(&self, last_decided: BlockReference, threshold_round: RoundNumber) -> Vec<LeaderStatus> {
         let highest_known_round = self.block_store.highest_round();
         let last_decided_round = last_decided.round();
         let last_decided_round_authority = (last_decided.round(), last_decided.authority);
@@ -33,6 +34,9 @@ impl UniversalCommitter {
         // Try to decide as many leaders as possible, starting with the highest round.
         let mut leaders = VecDeque::new();
         for round in (last_decided_round..=highest_known_round).rev() {
+            if round + self.wave_length > threshold_round {
+                continue;
+            }
             for committer in self.committers.iter().rev() {
                 // Skip committers that don't have a leader for this round.
                 let Some(leader) = committer.elect_leader(round) else {
@@ -59,16 +63,18 @@ impl UniversalCommitter {
             }
         }
 
+        tracing::debug!("Leaders before filtering: {leaders:?}");
+
         // The decided sequence is the longest prefix of decided leaders.
         leaders
             .into_iter()
-            // Skip all leaders before the last decided round.
+            // // Skip all leaders before the last decided round.
             .skip_while(|x| (x.round(), x.authority()) != last_decided_round_authority)
-            // Skip the last decided leader.
+            // // Skip the last decided leader.
             .skip(1)
-            // Filter out all the genesis.
+            // // Filter out all the genesis.
             .filter(|x| x.round() > 0)
-            // Stop the sequence upon encountering an undecided leader.
+            // // Stop the sequence upon encountering an undecided leader.
             .take_while(|x| x.is_decided())
             .inspect(|x| tracing::debug!("Decided {x}"))
             .collect()
@@ -159,6 +165,7 @@ impl UniversalCommitterBuilder {
             block_store: self.block_store,
             committers,
             metrics: self.metrics,
+            wave_length: self.wave_length,
         }
     }
 }

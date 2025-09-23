@@ -12,12 +12,12 @@ use crate::{
     types::{format_authority_round, AuthorityIndex, RoundNumber, StatementBlock},
 };
 
-/// The consensus protocol operates in 'waves'. Each wave is composed of a leader round
-/// and a decision round.
+/// The consensus protocol operates in 'waves'. Each wave is composed of a leader round,
+/// a decision round, and a round to make the common coin.
 type WaveNumber = u64;
 
 pub struct BaseCommitterOptions {
-    /// The length of a wave (minimum 2)
+    /// The length of a wave (minimum 3)
     pub wave_length: u64,
     /// The offset used in the leader-election protocol. This is used by the multi-committer to
     /// ensure that each [`BaseCommitter`] instance elects a different leader.
@@ -113,7 +113,7 @@ impl BaseCommitter {
         // Get all blocks that could be potential supports for the target leader. These blocks
         // are in the decision round of the target leader and are linked to the anchor.
         let wave = self.wave_number(leader_round);
-        let decision_round = self.decision_round(wave);
+        let decision_round = self.decision_round(wave) - 1;
         let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
         let potential_supports: Vec<_> = decision_blocks
             .iter()
@@ -150,7 +150,7 @@ impl BaseCommitter {
             panic!("More than one supported block at wave {wave} from leader {leader}")
         }
 
-        // We commit the target leader if it has enough support in the anchor's caussal history.
+        // We commit the target leader if it has enough support in the anchor's causal history.
         // Otherwise skip it.
         match supported_leader_blocks.pop() {
             Some(supported_leader_block) => LeaderStatus::Commit(supported_leader_block.clone()),
@@ -161,7 +161,7 @@ impl BaseCommitter {
     /// Check whether the specified leader has enough blames (that is, 4f+1 non-supports) to be
     /// directly skipped.
     fn enough_leader_blame(&self, decision_round: RoundNumber, leader: AuthorityIndex) -> bool {
-        let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
+        let decision_blocks = self.block_store.get_blocks_by_round(decision_round - 1);
 
         let mut blame_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
         for decision_block in &decision_blocks {
@@ -173,7 +173,7 @@ impl BaseCommitter {
             {
                 tracing::trace!(
                     "[{self}] {decision_block:?} is a blame for leader {}",
-                    format_authority_round(leader, decision_round - 1)
+                    format_authority_round(leader, decision_round - 2)
                 );
                 if blame_stake_aggregator.add(decider, &self.committee) {
                     return true;
@@ -190,7 +190,7 @@ impl BaseCommitter {
         decision_round: RoundNumber,
         leader_block: &Data<StatementBlock>,
     ) -> bool {
-        let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
+        let decision_blocks = self.block_store.get_blocks_by_round(decision_round - 1);
 
         let mut support_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
         for decision_block in &decision_blocks {

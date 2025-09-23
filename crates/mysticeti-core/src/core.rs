@@ -351,7 +351,7 @@ impl<H: BlockHandler> Core<H> {
     pub fn try_commit(&mut self) -> Vec<Data<StatementBlock>> {
         let sequence: Vec<_> = self
             .committer
-            .try_commit(self.last_commit_leader)
+            .try_commit(self.last_commit_leader, self.threshold_clock.get_round())
             .into_iter()
             .filter_map(|leader| leader.into_decided_block())
             .collect();
@@ -407,7 +407,7 @@ impl<H: BlockHandler> Core<H> {
     pub fn force_due_to_leader_blames(
         &self,
         period: u64,
-    ) -> bool { 
+    ) -> bool {
         let quorum_round = self.threshold_clock.get_round();
 
         // Only applicable when we are waiting for the previous leader blocks
@@ -422,7 +422,7 @@ impl<H: BlockHandler> Core<H> {
             });
 
             let quorum_blocks = self.block_store.get_blocks_by_round(quorum_round);
-            
+
             // Return true only if all leaders individually reach 2f + 1 blames
             for leader in leaders.into_iter() {
                 let mut blame_stake_aggregator = StakeAggregator::<IndirectQuorumThreshold>::new();

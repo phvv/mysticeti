@@ -13,7 +13,7 @@ use crate::{
 };
 
 /// The consensus protocol operates in 'waves'. Each wave is composed of a leader round,
-/// a decision round, and a round to make the common coin.
+/// a voting round, and a decision round.
 type WaveNumber = u64;
 
 pub struct BaseCommitterOptions {
@@ -82,12 +82,21 @@ impl BaseCommitter {
         wave * wave_length + wave_length - 1 + self.options.round_offset
     }
 
+    /// Return the voting round of the specified wave. The voting round is after the leader round
+    /// of the wave.
+    fn voting_round(&self, wave: WaveNumber) -> RoundNumber {
+        self.leader_round(wave) + 1
+    }
+
     /// The leader-elect protocol is offset by `leader_offset` to ensure that different committers
     /// with different leader offsets elect different leaders for the same round number. This
-    /// function returns `None` if there are no leaders for the specified round.
+    /// function returns `None` if there are no leaders for the specified round or if the decision
+    /// round of the wave has not been reached yet.
     pub fn elect_leader(&self, round: RoundNumber) -> Option<AuthorityIndex> {
         let wave = self.wave_number(round);
-        if self.leader_round(wave) != round {
+        let decision_round = self.decision_round(wave);
+        let highest_known_round = self.block_store.highest_round();
+        if self.leader_round(wave) != round || highest_known_round < decision_round {
             return None;
         }
 
@@ -111,11 +120,11 @@ impl BaseCommitter {
             .get_blocks_at_authority_round(leader, leader_round);
 
         // Get all blocks that could be potential supports for the target leader. These blocks
-        // are in the decision round of the target leader and are linked to the anchor.
+        // are in the voting round of the target leader and are linked to the anchor.
         let wave = self.wave_number(leader_round);
-        let decision_round = self.decision_round(wave) - 1;
-        let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
-        let potential_supports: Vec<_> = decision_blocks
+        let voting_round = self.voting_round(wave);
+        let voting_blocks = self.block_store.get_blocks_by_round(voting_round);
+        let potential_supports: Vec<_> = voting_blocks
             .iter()
             .filter(|block| self.block_store.linked(anchor, block))
             .collect();
@@ -160,22 +169,22 @@ impl BaseCommitter {
 
     /// Check whether the specified leader has enough blames (that is, 4f+1 non-supports) to be
     /// directly skipped.
-    fn enough_leader_blame(&self, decision_round: RoundNumber, leader: AuthorityIndex) -> bool {
-        let decision_blocks = self.block_store.get_blocks_by_round(decision_round - 1);
+    fn enough_leader_blame(&self, voting_round: RoundNumber, leader: AuthorityIndex) -> bool {
+        let voting_blocks = self.block_store.get_blocks_by_round(voting_round);
 
         let mut blame_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
-        for decision_block in &decision_blocks {
-            let decider = decision_block.reference().authority;
-            if decision_block
+        for voting_block in &voting_blocks {
+            let voter = voting_block.reference().authority;
+            if voting_block
                 .includes()
                 .iter()
                 .all(|include| include.authority != leader)
             {
                 tracing::trace!(
-                    "[{self}] {decision_block:?} is a blame for leader {}",
-                    format_authority_round(leader, decision_round - 2)
+                    "[{self}] {voting_block:?} is a blame for leader {}",
+                    format_authority_round(leader, voting_round - 2)
                 );
-                if blame_stake_aggregator.add(decider, &self.committee) {
+                if blame_stake_aggregator.add(voter, &self.committee) {
                     return true;
                 }
             }
@@ -187,23 +196,23 @@ impl BaseCommitter {
     /// to be directly committed.
     fn enough_leader_support(
         &self,
-        decision_round: RoundNumber,
+        voting_round: RoundNumber,
         leader_block: &Data<StatementBlock>,
     ) -> bool {
-        let decision_blocks = self.block_store.get_blocks_by_round(decision_round - 1);
+        let voting_blocks = self.block_store.get_blocks_by_round(voting_round);
 
         let mut support_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
-        for decision_block in &decision_blocks {
-            let decider = decision_block.reference().authority;
-            if decision_block
+        for voting_block in &voting_blocks {
+            let voter = voting_block.reference().authority;
+            if voting_block
                 .includes()
                 .iter()
                 .any(|include| include.authority == leader_block.author_round().0)
             {
                 tracing::trace!(
-                    "[{self}] {decision_block:?} is a support for leader {leader_block:?}"
+                    "[{self}] {voting_block:?} is a support for leader {leader_block:?}"
                 );
-                if support_stake_aggregator.add(decider, &self.committee) {
+                if support_stake_aggregator.add(voter, &self.committee) {
                     return true;
                 }
             }
@@ -252,8 +261,8 @@ impl BaseCommitter {
         // Check whether the leader has enough blame. That is, whether there are 4f+1 non-supports
         // for that leader.
         let wave = self.wave_number(leader_round);
-        let decision_round = self.decision_round(wave);
-        if self.enough_leader_blame(decision_round, leader) {
+        let voting_round = self.voting_round(wave);
+        if self.enough_leader_blame(voting_round, leader) {
             return LeaderStatus::Skip(leader, leader_round);
         }
 
@@ -265,7 +274,7 @@ impl BaseCommitter {
             .get_blocks_at_authority_round(leader, leader_round);
         let mut leaders_with_enough_support: Vec<_> = leader_blocks
             .into_iter()
-            .filter(|l| self.enough_leader_support(decision_round, l))
+            .filter(|l| self.enough_leader_support(voting_round, l))
             .map(LeaderStatus::Commit)
             .collect();
 

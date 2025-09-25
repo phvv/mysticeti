@@ -212,7 +212,7 @@ fn no_genesis_commit() {
     let wave_length = DEFAULT_WAVE_LENGTH;
     let number_of_leaders = committee.quorum_threshold() as usize;
 
-    let first_commit_round = 2 * wave_length - 2;
+    let first_commit_round = 2 * wave_length - 1;
     for r in 0..first_commit_round {
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, r);

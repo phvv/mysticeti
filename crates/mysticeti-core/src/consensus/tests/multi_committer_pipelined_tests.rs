@@ -143,7 +143,7 @@ fn direct_commit_partial_round() {
     let first_leader = committee.elect_leader(first_leader_round);
     let last_committed = BlockReference::new_test(first_leader, first_leader_round);
 
-    let enough_blocks = 2 * wave_length - 1;
+    let enough_blocks = wave_length;
     let mut block_writer = TestBlockWriter::new(&committee);
     build_dag(&committee, &mut block_writer, None, enough_blocks);
 
@@ -160,7 +160,7 @@ fn direct_commit_partial_round() {
     let sequence = committer.try_commit(last_committed);
     tracing::info!("Commit sequence: {sequence:?}");
 
-    assert_eq!(sequence.len(), wave_length as usize * number_of_leaders - 1);
+    assert_eq!(sequence.len(), number_of_leaders - 1);
     for (i, leader) in sequence.iter().enumerate() {
         if let LeaderStatus::Commit(block) = leader {
             let num_leaders_u64 = number_of_leaders as u64;

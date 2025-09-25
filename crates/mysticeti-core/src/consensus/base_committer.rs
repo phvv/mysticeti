@@ -182,7 +182,7 @@ impl BaseCommitter {
             {
                 tracing::trace!(
                     "[{self}] {voting_block:?} is a blame for leader {}",
-                    format_authority_round(leader, voting_round - 2)
+                    format_authority_round(leader, voting_round - 1)
                 );
                 if blame_stake_aggregator.add(voter, &self.committee) {
                     return true;

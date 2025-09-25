@@ -344,6 +344,7 @@ fn indirect_commit() {
     } else {
         panic!("Expected a committed leader")
     };
+    assert_eq!(0, 2);
 }
 
 /// Commit the first leader, skip the 2nd, and commit the 3rd leader.

@@ -19,7 +19,7 @@ mod tests;
 /// committing the leader under asynchrony at the cost of latency in the common case.
 pub const DEFAULT_WAVE_LENGTH: RoundNumber = MINIMUM_WAVE_LENGTH;
 
-/// We need at least one leader round, one voting round, and one decision round.
+/// We need at least one leader round, one booster round, and one decision round.
 pub const MINIMUM_WAVE_LENGTH: RoundNumber = 3;
 
 /// The status of every leader output by the committers. While the core only cares about committed

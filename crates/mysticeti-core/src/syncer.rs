@@ -91,9 +91,6 @@ impl<H: BlockHandler, S: SyncerSignals, C: CommitObserver> Syncer<H, S, C> {
         if self.force_new_block
             || self
                 .core
-                .force_due_to_leader_blames(self.commit_period)
-            || self
-                .core
                 .ready_new_block(self.commit_period, &self.connected_authorities)
         {
             if self.core.try_new_block().is_none() {

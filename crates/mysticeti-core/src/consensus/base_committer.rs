@@ -163,8 +163,7 @@ impl BaseCommitter {
     }
 
     /// Decide the status of a target leader from the specified anchor. We commit the target leader
-    /// if it has enough support (that is, a weak certificate) in the causal history the anchor.
-    /// Otherwise, we skip the target leader.
+    /// if the anchor is a weak certificate for it. Otherwise, we skip the target leader.
     fn decide_leader_from_anchor(
         &self,
         anchor: &Data<StatementBlock>,
@@ -177,25 +176,13 @@ impl BaseCommitter {
             .block_store
             .get_blocks_at_authority_round(leader, leader_round);
 
-        // Potential weak certificates are the set of blocks that are in the decision round of
-        // the target leader and have a link to the anchor
         let wave = self.wave_number(leader_round);
-        let decision_round = self.decision_round(wave);
-        let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
-        let potential_weak_certificates: Vec<_> = decision_blocks
-            .iter()
-            .filter(|block| self.block_store.linked(anchor, block))
-            .collect();
 
-        // Use those potential weak certificates to determine which (if any) of the target leader
+        // Use the anchor to determine which (if any) of the target leader
         // blocks can be committed.
         let mut weak_certified_leader_blocks: Vec<_> = leader_blocks
             .into_iter()
-            .filter(|leader_block| {
-                potential_weak_certificates.iter().any(|potential_weak_certificate| {
-                    self.is_weak_certificate(potential_weak_certificate, leader_block)
-                })
-            })
+            .filter(|leader_block| self.is_weak_certificate(anchor, leader_block))
             .collect();
 
         // There can be at most one weakly certified leader, otherwise it means the BFT assumption
@@ -204,7 +191,7 @@ impl BaseCommitter {
             panic!("More than one weakly certified block at wave {wave} from leader {leader}")
         }
 
-        // We commit the target leader if it has a weak certificate in the anchor's causal history.
+        // We commit the target leader if the anchor is a weak certificate.
         // Otherwise skip it.
         match weak_certified_leader_blocks.pop() {
             Some(weak_certified_leader_block) => LeaderStatus::Commit(weak_certified_leader_block.clone()),
@@ -214,25 +201,18 @@ impl BaseCommitter {
 
     /// Check whether the specified leader has enough blames (that is, 4f+1 non-votes) to be
     /// directly skipped.
-    fn can_skip_leader(&self, voting_round: RoundNumber, leader: AuthorityIndex, leader_round: RoundNumber) -> bool {
-        let leader_blocks = self.block_store.get_blocks_at_authority_round(leader, leader_round);
-        let voting_blocks = self.block_store.get_blocks_by_round(voting_round);
+    fn enough_leader_blame(&self, decision_round: RoundNumber, leader_block: &Data<StatementBlock>) -> bool {
+        let decision_blocks = self.block_store.get_blocks_by_round(decision_round);
 
-        // There are no leader blocks.
-        if leader_blocks.len() == 0 {
-            return true;
-        }
-
-        for leader_block in &leader_blocks {
-            let mut skip_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
-            for voting_block in &voting_blocks {
-                if !self.is_vote(voting_block, leader_block) {
-                    tracing::trace!(
-                        "[{self}] {voting_block:?} is a blame for leader {leader_block:?}"
-                    );
-                    if skip_stake_aggregator.add(voting_block.reference().authority, &self.committee) {
-                        return true;
-                    }
+        let mut blame_stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
+        for decision_block in &decision_blocks {
+            let decider = decision_block.reference().authority;
+            if !self.is_vote(decision_block, leader_block) {
+                tracing::trace!(
+                    "[{self}] {decision_block:?} is a blame for leader {leader_block:?}"
+                );
+                if blame_stake_aggregator.add(decider, &self.committee) {
+                    return true;
                 }
             }
         }
@@ -318,19 +298,29 @@ impl BaseCommitter {
             return LeaderStatus::Undecided(leader, leader_round);
         }
 
-        // Check whether the leader has enough blame. That is, whether there are 4f+1 non-votes
-        // for that leader.
-        let voting_round = leader_round + 1;
-        if self.can_skip_leader(voting_round, leader, leader_round) {
+        let leader_blocks = self.block_store.get_blocks_at_authority_round(leader, leader_round);
+
+        // There are no leader blocks.
+        if leader_blocks.len() == 0 {
+            return LeaderStatus::Skip(leader, leader_round);
+        }
+
+        // Check whether the leader(s) has enough blame. That is, whether there are 4f+1
+        // blames for the leader. Note that there could be more than one leader block
+        // (created by Byzantine leaders).
+        let leaders_with_enough_blame: Vec<_> = leader_blocks
+            .iter()
+            .filter(|l| self.enough_leader_blame(decision_round, l))
+            .collect();
+
+        // If there is at least one leader block with enough blame, we skip the leader.
+        if leaders_with_enough_blame.len() > 0 {
             return LeaderStatus::Skip(leader, leader_round);
         }
 
         // Check whether the leader(s) has enough support. That is, whether there are 4f+1
         // votes for the leader. Note that there could be more than one leader block
         // (created by Byzantine leaders).
-        let leader_blocks = self
-            .block_store
-            .get_blocks_at_authority_round(leader, leader_round);
         let mut leaders_with_enough_support: Vec<_> = leader_blocks
             .into_iter()
             .filter(|l| self.enough_leader_support(decision_round, l))

@@ -82,7 +82,7 @@ fn multiple_direct_commit() {
 
     let mut last_committed = BlockReference::new_test(0, 0);
     for n in 1..=10 {
-        let enough_blocks = n + (wave_length - 1);
+        let enough_blocks = wave_length + n - 1;
         let mut block_writer = TestBlockWriter::new(&committee);
         build_dag(&committee, &mut block_writer, None, enough_blocks);
 
@@ -119,7 +119,7 @@ fn direct_commit_late_call() {
     let wave_length = DEFAULT_WAVE_LENGTH;
 
     let n = 10;
-    let enough_blocks = n + (wave_length - 1);
+    let enough_blocks = wave_length + n - 1;
     let mut block_writer = TestBlockWriter::new(&committee);
     build_dag(&committee, &mut block_writer, None, enough_blocks);
 
@@ -291,35 +291,65 @@ fn indirect_commit() {
 
     // Add enough blocks to reach the 1st leader.
     let leader_round_1 = 1;
-    let references_1 = build_dag(&committee, &mut block_writer, None, leader_round_1);
+    let references_0 = build_dag(&committee, &mut block_writer, None, leader_round_1);
 
     // Filter out that leader.
-    let references_without_leader_1: Vec<_> = references_1
+    let references_without_leader_1: Vec<_> = references_0
         .iter()
         .cloned()
         .filter(|x| x.authority != committee.elect_leader(leader_round_1))
         .collect();
 
-    // Only 2f+1 validators support the 1st leader.
-    let mut references = Vec::new();
+    // Only 1 validator supports the 1st leader.
+    let mut references_1 = Vec::new();
 
     let connections_with_leader_1 = committee
         .authorities()
-        .take(committee.indirect_threshold() as usize)
-        .map(|authority| (authority, references_1.clone()))
+        .take(1)
+        .map(|authority| (authority, references_0.clone()))
         .collect();
-    references.extend(build_dag_layer(
+    references_1.extend(build_dag_layer(
         connections_with_leader_1,
         &mut block_writer,
     ));
 
     let connections_without_leader_1 = committee
         .authorities()
-        .skip(committee.indirect_threshold() as usize)
+        .skip(1)
         .map(|authority| (authority, references_without_leader_1.clone()))
         .collect();
-    references.extend(build_dag_layer(
+    references_1.extend(build_dag_layer(
         connections_without_leader_1,
+        &mut block_writer,
+    ));
+
+    // Filter out the authority which supported the 1st leader.
+    let references_without_booster_1: Vec<_> = references_1
+        .iter()
+        .cloned()
+        .filter(|x| x.authority != committee.authorities().next().unwrap())
+        .collect();
+
+    // 2f+1 validators support the 1st leader in the next round (the decision round).
+    let mut references_2 = Vec::new();
+
+    let connections_with_booster_1 = committee
+        .authorities()
+        .take(committee.indirect_threshold() as usize)
+        .map(|authority| (authority, references_1.clone()))
+        .collect();
+    references_2.extend(build_dag_layer(
+        connections_with_booster_1,
+        &mut block_writer,
+    ));
+
+    let connections_without_booster_1 = committee
+        .authorities()
+        .skip(committee.indirect_threshold() as usize)
+        .map(|authority| (authority, references_without_booster_1.clone()))
+        .collect();
+    references_2.extend(build_dag_layer(
+        connections_without_booster_1,
         &mut block_writer,
     ));
 
@@ -328,11 +358,11 @@ fn indirect_commit() {
     // to recursively decide it.
     // Due to the pipeline, there is a leader per round. The 5th leader is decided in the final
     // round of its wave.
-    let decision_round_2 = 5 + (wave_length - 1);
+    let decision_round_2 = wave_length + 4;
     build_dag(
         &committee,
         &mut block_writer,
-        Some(references),
+        Some(references_2),
         decision_round_2,
     );
 
@@ -370,22 +400,22 @@ fn indirect_skip() {
     let mut block_writer = TestBlockWriter::new(&committee);
 
     // Add enough blocks to reach the 4th leader.
-    let leader_round_4 = 2 * wave_length;
+    let leader_round_4 = 4;
     let references_4 = build_dag(&committee, &mut block_writer, None, leader_round_4);
 
-    // Filter out that leader.
+    // Filter out the 4th leader.
     let references_without_leader_4: Vec<_> = references_4
         .iter()
         .cloned()
         .filter(|x| x.authority != committee.elect_leader(leader_round_4))
         .collect();
 
-    // Only f+1 validators support the 4th leader.
+    // Only 1 validator supports the 4th leader.
     let mut references_5 = Vec::new();
 
     let connections_with_leader_4 = committee
         .authorities()
-        .take(committee.validity_threshold() as usize)
+        .take(1)
         .map(|authority| (authority, references_4.clone()))
         .collect();
     references_5.extend(build_dag_layer(
@@ -395,7 +425,7 @@ fn indirect_skip() {
 
     let connections_without_leader_4 = committee
         .authorities()
-        .skip(committee.validity_threshold() as usize)
+        .skip(1)
         .map(|authority| (authority, references_without_leader_4.clone()))
         .collect();
     references_5.extend(build_dag_layer(
@@ -403,14 +433,44 @@ fn indirect_skip() {
         &mut block_writer,
     ));
 
+    // Filter out the authority which supported the 4th leader.
+    let references_without_booster_4: Vec<_> = references_5
+        .iter()
+        .cloned()
+        .filter(|x| x.authority != committee.authorities().next().unwrap())
+        .collect();
+
+    // f+1 validators support the 4th leader in the next round (the decision round).
+    let mut references_6 = Vec::new();
+
+    let connections_with_booster_4 = committee
+        .authorities()
+        .take(committee.validity_threshold() as usize)
+        .map(|authority| (authority, references_5.clone()))
+        .collect();
+    references_6.extend(build_dag_layer(
+        connections_with_booster_4,
+        &mut block_writer,
+    ));
+
+    let connections_without_booster_4 = committee
+        .authorities()
+        .skip(committee.validity_threshold() as usize)
+        .map(|authority| (authority, references_without_booster_4.clone()))
+        .collect();
+    references_6.extend(build_dag_layer(
+        connections_without_booster_4,
+        &mut block_writer,
+    ));
+
     // Add enough blocks to reach the decision round of the 7th leader.
     // Due to the pipeline, there is a leader per round. The 7th leader is decided in the final
     // round of its wave.
-    let decision_round_7 = 7 + (wave_length - 1);
+    let decision_round_7 = wave_length + 6;
     build_dag(
         &committee,
         &mut block_writer,
-        Some(references_5),
+        Some(references_6),
         decision_round_7,
     );
 
@@ -470,34 +530,67 @@ fn undecided() {
 
     // Add enough blocks to reach the first leader.
     let leader_round_1 = 1;
-    let references_1 = build_dag(&committee, &mut block_writer, None, leader_round_1);
+    let references_0 = build_dag(&committee, &mut block_writer, None, leader_round_1);
 
     // Filter out that leader.
-    let references_1_without_leader: Vec<_> = references_1
+    let references_without_leader_1: Vec<_> = references_0
         .iter()
         .cloned()
         .filter(|x| x.authority != committee.elect_leader(leader_round_1))
         .collect();
 
-    // Create a dag layer where only one authority supports the first leader.
-    let mut authorities = committee.authorities();
-    let leader_connection = vec![(authorities.next().unwrap(), references_1)];
-    let non_leader_connections: Vec<_> = authorities
-        .take((committee.quorum_threshold() - 1) as usize)
-        .map(|authority| (authority, references_1_without_leader.clone()))
+    // Only 1 validator supports the leader in the next round (the booster round).
+    let mut references_1 = Vec::new();
+
+    let connections_with_leader_1 = committee
+        .authorities()
+        .take(1)
+        .map(|authority| (authority, references_0.clone()))
+        .collect();
+    references_1.extend(build_dag_layer(
+        connections_with_leader_1,
+        &mut block_writer,
+    ));
+
+    let connections_without_leader_1 = committee
+        .authorities()
+        .skip(1)
+        .map(|authority| (authority, references_without_leader_1.clone()))
+        .collect();
+    references_1.extend(build_dag_layer(
+        connections_without_leader_1,
+        &mut block_writer,
+    ));
+
+    // Filter out the authority which supported the leader.
+    let references_without_booster_1: Vec<_> = references_1
+        .iter()
+        .cloned()
+        .filter(|x| x.authority != committee.authorities().next().unwrap())
         .collect();
 
-    let connections = leader_connection.into_iter().chain(non_leader_connections);
-    let references = build_dag_layer(connections.collect(), &mut block_writer);
+    // f+1 validators support the leader in the next round (the decision round).
+    let mut references_2 = Vec::new();
 
-    // Add enough blocks to reach the first decision round
-    let decision_round_1 = wave_length;
-    build_dag(
-        &committee,
+    let connections_with_booster_1 = committee
+        .authorities()
+        .take(committee.validity_threshold() as usize)
+        .map(|authority| (authority, references_1.clone()))
+        .collect();
+    references_2.extend(build_dag_layer(
+        connections_with_booster_1,
         &mut block_writer,
-        Some(references),
-        decision_round_1,
-    );
+    ));
+
+    let connections_without_booster_1 = committee
+        .authorities()
+        .skip(committee.validity_threshold() as usize)
+        .map(|authority| (authority, references_without_booster_1.clone()))
+        .collect();
+    references_2.extend(build_dag_layer(
+        connections_without_booster_1,
+        &mut block_writer,
+    ));
 
     // Ensure no blocks are committed.
     let committer = UniversalCommitterBuilder::new(
